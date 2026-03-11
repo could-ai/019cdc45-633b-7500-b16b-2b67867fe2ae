@@ -5,6 +5,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
+// --- New Activation Provider ---
+
+class ActivationNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    // Default state is false (offline/inactive)
+    return false;
+  }
+
+  void toggle() {
+    state = !state;
+  }
+}
+
+final activationProvider = NotifierProvider<ActivationNotifier, bool>(() {
+  return ActivationNotifier();
+});
+
+
 // --- Existing Dashboard Data & Provider ---
 
 class DashboardData {
@@ -30,6 +49,15 @@ class DashboardData {
 class DashboardNotifier extends AsyncNotifier<DashboardData> {
   @override
   Future<DashboardData> build() async {
+    // 1. Watch the activation provider. 
+    // This makes DashboardNotifier dependent on activationProvider.
+    // Whenever activationProvider changes, this build method will re-run!
+    final isActive = ref.watch(activationProvider);
+    
+    if (!isActive) {
+      throw Exception('System is offline. Please activate to fetch dashboard data.');
+    }
+
     final initialUserId = Random().nextInt(10) + 1;
     final initialPostId = Random().nextInt(100) + 1;
     return _fetchAll(initialUserId, initialPostId);
@@ -65,11 +93,15 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
   }
 
   Future<void> refreshAll(int userId, int postId) async {
+    if (!ref.read(activationProvider)) return; // Prevent refresh if offline
+    
     state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
     state = await AsyncValue.guard(() => _fetchAll(userId, postId));
   }
 
   Future<void> refreshUser(int userId) async {
+    if (!ref.read(activationProvider)) return; // Prevent refresh if offline
+
     final currentData = state.value;
     if (currentData == null) {
       return refreshAll(userId, Random().nextInt(100) + 1);
@@ -82,6 +114,8 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
   }
 
   Future<void> refreshPost(int postId) async {
+    if (!ref.read(activationProvider)) return; // Prevent refresh if offline
+
     final currentData = state.value;
     if (currentData == null) {
       return refreshAll(Random().nextInt(10) + 1, postId);
@@ -99,7 +133,7 @@ final dashboardProvider = AsyncNotifierProvider<DashboardNotifier, DashboardData
 });
 
 
-// --- New Streaming Data & Provider ---
+// --- Streaming Data & Provider ---
 
 class Photo {
   final int id;
@@ -118,7 +152,6 @@ class Photo {
 }
 
 Future<List<Photo>> _fetchRandomPhotos() async {
-  // Fetch a random page of 4 photos to simulate changing live data
   final randomStart = Random().nextInt(100);
   final response = await http.get(
     Uri.parse('https://jsonplaceholder.typicode.com/photos?_start=$randomStart&_limit=4')
@@ -132,12 +165,19 @@ Future<List<Photo>> _fetchRandomPhotos() async {
   }
 }
 
-// StreamProvider that yields new data immediately, and then every 10 seconds
 final livePhotosProvider = StreamProvider<List<Photo>>((ref) async* {
-  // 1. Yield initial data immediately
+  // 1. Watch the activation provider.
+  // If it changes to false, the stream will be cancelled and re-evaluated.
+  final isActive = ref.watch(activationProvider);
+  
+  if (!isActive) {
+    throw Exception('System is offline. Please activate to view live feed.');
+  }
+
+  // Yield initial data immediately
   yield await _fetchRandomPhotos();
 
-  // 2. Yield new data every 10 seconds using Stream.periodic
+  // Yield new data every 10 seconds
   await for (final _ in Stream.periodic(const Duration(seconds: 10))) {
     yield await _fetchRandomPhotos();
   }
@@ -180,6 +220,7 @@ class MyHomePage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final isActive = ref.watch(activationProvider);
     final asyncDashboardData = ref.watch(dashboardProvider);
     final livePhotosData = ref.watch(livePhotosProvider);
 
@@ -188,18 +229,45 @@ class MyHomePage extends ConsumerWidget {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(title),
       ),
-      // Wrapped in SingleChildScrollView to allow scrolling with the new grid
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
+              // --- Activation Toggle Section ---
+              Card(
+                color: isActive ? Colors.teal.shade50 : Colors.red.shade50,
+                shape: RoundedRectangleBorder(
+                  side: BorderSide(
+                    color: isActive ? Colors.teal : Colors.redAccent,
+                    width: 2,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: SwitchListTile(
+                  title: Text(
+                    isActive ? 'System Active' : 'System Offline',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: isActive ? Colors.teal.shade900 : Colors.red.shade900,
+                    ),
+                  ),
+                  subtitle: const Text('Toggle to enable/disable API requests'),
+                  value: isActive,
+                  activeColor: Colors.teal,
+                  onChanged: (_) {
+                    ref.read(activationProvider.notifier).toggle();
+                  },
+                ),
+              ),
+              const SizedBox(height: 24),
+
               // --- Dashboard Section (AsyncNotifierProvider) ---
               const Icon(Icons.cloud_done, size: 64, color: Colors.teal),
               const SizedBox(height: 24),
               
-              if (asyncDashboardData.isLoading)
+              if (asyncDashboardData.isLoading && isActive)
                 const Padding(
                   padding: EdgeInsets.only(bottom: 16.0),
                   child: LinearProgressIndicator(),
@@ -226,7 +294,7 @@ class MyHomePage extends ConsumerWidget {
                         trailing: IconButton(
                           icon: const Icon(Icons.refresh),
                           tooltip: 'Refresh User Only',
-                          onPressed: asyncDashboardData.isLoading 
+                          onPressed: (asyncDashboardData.isLoading || !isActive)
                               ? null 
                               : () {
                                   final randomUserId = Random().nextInt(10) + 1;
@@ -244,7 +312,7 @@ class MyHomePage extends ConsumerWidget {
                         trailing: IconButton(
                           icon: const Icon(Icons.refresh),
                           tooltip: 'Refresh Post Only',
-                          onPressed: asyncDashboardData.isLoading 
+                          onPressed: (asyncDashboardData.isLoading || !isActive)
                               ? null 
                               : () {
                                   final randomPostId = Random().nextInt(100) + 1;
@@ -256,7 +324,16 @@ class MyHomePage extends ConsumerWidget {
                   ],
                 ),
                 loading: () => const Center(child: CircularProgressIndicator()),
-                error: (error, stackTrace) => Center(child: Text('Error: $error', style: const TextStyle(color: Colors.red))),
+                error: (error, stackTrace) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      '$error', 
+                      style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
               ),
 
               const SizedBox(height: 32),
@@ -267,7 +344,7 @@ class MyHomePage extends ConsumerWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.sensors, color: Colors.redAccent),
+                  Icon(Icons.sensors, color: isActive ? Colors.redAccent : Colors.grey),
                   const SizedBox(width: 8),
                   Text(
                     'Live Feed (Updates every 10s):',
@@ -324,7 +401,14 @@ class MyHomePage extends ConsumerWidget {
                   ),
                 ),
                 error: (error, stackTrace) => Center(
-                  child: Text('Error loading live feed: $error', style: const TextStyle(color: Colors.red)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      '$error', 
+                      style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -332,7 +416,8 @@ class MyHomePage extends ConsumerWidget {
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: asyncDashboardData.isLoading 
+        backgroundColor: isActive ? Colors.teal : Colors.grey,
+        onPressed: (asyncDashboardData.isLoading || !isActive)
             ? null 
             : () {
                 final randomUserId = Random().nextInt(10) + 1;
