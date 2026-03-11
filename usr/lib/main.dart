@@ -4,19 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
-// 1. Define a model class to hold the combined data from multiple sources.
-class DashboardData {
-  final String userName;
-  final String postTitle;
+// We removed the DashboardData class entirely!
+// Instead, we are using a Dart 3 Named Record: ({String userName, String postTitle})
+// This allows the provider to return two separate strings without needing a custom class.
 
-  DashboardData({required this.userName, required this.postTitle});
-}
-
-// 2. Create an AsyncNotifier class.
-class DashboardNotifier extends AsyncNotifier<DashboardData> {
+class DashboardNotifier extends AsyncNotifier<({String userName, String postTitle})> {
   
   @override
-  Future<DashboardData> build() async {
+  Future<({String userName, String postTitle})> build() async {
     return _fetchAll();
   }
 
@@ -45,13 +40,14 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
   }
 
   // Helper to fetch both concurrently
-  Future<DashboardData> _fetchAll() async {
+  Future<({String userName, String postTitle})> _fetchAll() async {
     final results = await Future.wait([
       _fetchUser(),
       _fetchPost(),
     ]);
     
-    return DashboardData(
+    // Return a Dart 3 Named Record containing our two strings
+    return (
       userName: results[0],
       postTitle: results[1],
     );
@@ -60,7 +56,7 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
   // Refresh everything
   Future<void> refreshAll() async {
     // Set state to loading but preserve the previous data so the UI doesn't flash
-    state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
+    state = const AsyncLoading<({String userName, String postTitle})>().copyWithPrevious(state);
     state = await AsyncValue.guard(() => _fetchAll());
   }
 
@@ -72,11 +68,11 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
       return refreshAll();
     }
 
-    state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
+    state = const AsyncLoading<({String userName, String postTitle})>().copyWithPrevious(state);
     state = await AsyncValue.guard(() async {
       final newUserName = await _fetchUser();
-      // Return a new DashboardData object keeping the old postTitle
-      return DashboardData(
+      // Return a new Record keeping the old postTitle
+      return (
         userName: newUserName,
         postTitle: currentData.postTitle,
       );
@@ -91,11 +87,11 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
       return refreshAll();
     }
 
-    state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
+    state = const AsyncLoading<({String userName, String postTitle})>().copyWithPrevious(state);
     state = await AsyncValue.guard(() async {
       final newPostTitle = await _fetchPost();
-      // Return a new DashboardData object keeping the old userName
-      return DashboardData(
+      // Return a new Record keeping the old userName
+      return (
         userName: currentData.userName,
         postTitle: newPostTitle,
       );
@@ -103,7 +99,7 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
   }
 }
 
-final dashboardProvider = AsyncNotifierProvider<DashboardNotifier, DashboardData>(() {
+final dashboardProvider = AsyncNotifierProvider<DashboardNotifier, ({String userName, String postTitle})>(() {
   return DashboardNotifier();
 });
 
@@ -181,6 +177,7 @@ class MyHomePage extends ConsumerWidget {
                   child: ListTile(
                     leading: const Icon(Icons.person),
                     title: const Text('Random User'),
+                    // Accessing the named record field
                     subtitle: Text(data.userName, style: const TextStyle(fontWeight: FontWeight.bold)),
                     trailing: IconButton(
                       icon: const Icon(Icons.refresh),
@@ -199,6 +196,7 @@ class MyHomePage extends ConsumerWidget {
                   child: ListTile(
                     leading: const Icon(Icons.article),
                     title: const Text('Random Post Title'),
+                    // Accessing the named record field
                     subtitle: Text(data.postTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
                     trailing: IconButton(
                       icon: const Icon(Icons.refresh),
