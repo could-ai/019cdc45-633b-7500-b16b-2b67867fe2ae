@@ -4,14 +4,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
-// We removed the DashboardData class entirely!
-// Instead, we are using a Dart 3 Named Record: ({String userName, String postTitle})
-// This allows the provider to return two separate strings without needing a custom class.
+// Re-introduced the DashboardData class to hold our state
+class DashboardData {
+  final String userName;
+  final String postTitle;
 
-class DashboardNotifier extends AsyncNotifier<({String userName, String postTitle})> {
+  DashboardData({
+    required this.userName,
+    required this.postTitle,
+  });
+
+  // copyWith is highly recommended for Riverpod states to easily update single fields
+  DashboardData copyWith({
+    String? userName,
+    String? postTitle,
+  }) {
+    return DashboardData(
+      userName: userName ?? this.userName,
+      postTitle: postTitle ?? this.postTitle,
+    );
+  }
+}
+
+class DashboardNotifier extends AsyncNotifier<DashboardData> {
   
   @override
-  Future<({String userName, String postTitle})> build() async {
+  Future<DashboardData> build() async {
     return _fetchAll();
   }
 
@@ -40,14 +58,13 @@ class DashboardNotifier extends AsyncNotifier<({String userName, String postTitl
   }
 
   // Helper to fetch both concurrently
-  Future<({String userName, String postTitle})> _fetchAll() async {
+  Future<DashboardData> _fetchAll() async {
     final results = await Future.wait([
       _fetchUser(),
       _fetchPost(),
     ]);
     
-    // Return a Dart 3 Named Record containing our two strings
-    return (
+    return DashboardData(
       userName: results[0],
       postTitle: results[1],
     );
@@ -56,7 +73,7 @@ class DashboardNotifier extends AsyncNotifier<({String userName, String postTitl
   // Refresh everything
   Future<void> refreshAll() async {
     // Set state to loading but preserve the previous data so the UI doesn't flash
-    state = const AsyncLoading<({String userName, String postTitle})>().copyWithPrevious(state);
+    state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
     state = await AsyncValue.guard(() => _fetchAll());
   }
 
@@ -68,14 +85,11 @@ class DashboardNotifier extends AsyncNotifier<({String userName, String postTitl
       return refreshAll();
     }
 
-    state = const AsyncLoading<({String userName, String postTitle})>().copyWithPrevious(state);
+    state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
     state = await AsyncValue.guard(() async {
       final newUserName = await _fetchUser();
-      // Return a new Record keeping the old postTitle
-      return (
-        userName: newUserName,
-        postTitle: currentData.postTitle,
-      );
+      // Use copyWith to update only the userName
+      return currentData.copyWith(userName: newUserName);
     });
   }
 
@@ -87,19 +101,16 @@ class DashboardNotifier extends AsyncNotifier<({String userName, String postTitl
       return refreshAll();
     }
 
-    state = const AsyncLoading<({String userName, String postTitle})>().copyWithPrevious(state);
+    state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
     state = await AsyncValue.guard(() async {
       final newPostTitle = await _fetchPost();
-      // Return a new Record keeping the old userName
-      return (
-        userName: currentData.userName,
-        postTitle: newPostTitle,
-      );
+      // Use copyWith to update only the postTitle
+      return currentData.copyWith(postTitle: newPostTitle);
     });
   }
 }
 
-final dashboardProvider = AsyncNotifierProvider<DashboardNotifier, ({String userName, String postTitle})>(() {
+final dashboardProvider = AsyncNotifierProvider<DashboardNotifier, DashboardData>(() {
   return DashboardNotifier();
 });
 
@@ -177,7 +188,6 @@ class MyHomePage extends ConsumerWidget {
                   child: ListTile(
                     leading: const Icon(Icons.person),
                     title: const Text('Random User'),
-                    // Accessing the named record field
                     subtitle: Text(data.userName, style: const TextStyle(fontWeight: FontWeight.bold)),
                     trailing: IconButton(
                       icon: const Icon(Icons.refresh),
@@ -196,7 +206,6 @@ class MyHomePage extends ConsumerWidget {
                   child: ListTile(
                     leading: const Icon(Icons.article),
                     title: const Text('Random Post Title'),
-                    // Accessing the named record field
                     subtitle: Text(data.postTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
                     trailing: IconButton(
                       icon: const Icon(Icons.refresh),
