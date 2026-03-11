@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
-// Re-introduced the DashboardData class to hold our state
 class DashboardData {
   final String userName;
   final String postTitle;
@@ -14,7 +13,6 @@ class DashboardData {
     required this.postTitle,
   });
 
-  // copyWith is highly recommended for Riverpod states to easily update single fields
   DashboardData copyWith({
     String? userName,
     String? postTitle,
@@ -30,13 +28,15 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
   
   @override
   Future<DashboardData> build() async {
-    return _fetchAll();
+    // For the initial load, we can still generate random IDs or use defaults.
+    final initialUserId = Random().nextInt(10) + 1;
+    final initialPostId = Random().nextInt(100) + 1;
+    return _fetchAll(initialUserId, initialPostId);
   }
 
-  // Helper to fetch just the user
-  Future<String> _fetchUser() async {
-    final randomUserId = Random().nextInt(10) + 1;
-    final response = await http.get(Uri.parse('https://jsonplaceholder.typicode.com/users/$randomUserId'));
+  // Helper to fetch just the user, now accepts an ID
+  Future<String> _fetchUser(int userId) async {
+    final response = await http.get(Uri.parse('https://jsonplaceholder.typicode.com/users/$userId'));
     
     if (response.statusCode == 200) {
       return jsonDecode(response.body)['name'];
@@ -45,10 +45,9 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
     }
   }
 
-  // Helper to fetch just the post
-  Future<String> _fetchPost() async {
-    final randomPostId = Random().nextInt(100) + 1;
-    final response = await http.get(Uri.parse('https://jsonplaceholder.typicode.com/posts/$randomPostId'));
+  // Helper to fetch just the post, now accepts an ID
+  Future<String> _fetchPost(int postId) async {
+    final response = await http.get(Uri.parse('https://jsonplaceholder.typicode.com/posts/$postId'));
     
     if (response.statusCode == 200) {
       return jsonDecode(response.body)['title'];
@@ -57,11 +56,11 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
     }
   }
 
-  // Helper to fetch both concurrently
-  Future<DashboardData> _fetchAll() async {
+  // Helper to fetch both concurrently, now accepts IDs
+  Future<DashboardData> _fetchAll(int userId, int postId) async {
     final results = await Future.wait([
-      _fetchUser(),
-      _fetchPost(),
+      _fetchUser(userId),
+      _fetchPost(postId),
     ]);
     
     return DashboardData(
@@ -70,41 +69,38 @@ class DashboardNotifier extends AsyncNotifier<DashboardData> {
     );
   }
 
-  // Refresh everything
-  Future<void> refreshAll() async {
-    // Set state to loading but preserve the previous data so the UI doesn't flash
+  // Refresh everything with specific IDs
+  Future<void> refreshAll(int userId, int postId) async {
     state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
-    state = await AsyncValue.guard(() => _fetchAll());
+    state = await AsyncValue.guard(() => _fetchAll(userId, postId));
   }
 
-  // Refresh ONLY the user
-  Future<void> refreshUser() async {
+  // Refresh ONLY the user with a specific ID
+  Future<void> refreshUser(int userId) async {
     final currentData = state.value;
-    // If we don't have current data, just do a full refresh
     if (currentData == null) {
-      return refreshAll();
+      // Fallback if there's no current data
+      return refreshAll(userId, Random().nextInt(100) + 1);
     }
 
     state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
     state = await AsyncValue.guard(() async {
-      final newUserName = await _fetchUser();
-      // Use copyWith to update only the userName
+      final newUserName = await _fetchUser(userId);
       return currentData.copyWith(userName: newUserName);
     });
   }
 
-  // Refresh ONLY the post
-  Future<void> refreshPost() async {
+  // Refresh ONLY the post with a specific ID
+  Future<void> refreshPost(int postId) async {
     final currentData = state.value;
-    // If we don't have current data, just do a full refresh
     if (currentData == null) {
-      return refreshAll();
+      // Fallback if there's no current data
+      return refreshAll(Random().nextInt(10) + 1, postId);
     }
 
     state = const AsyncLoading<DashboardData>().copyWithPrevious(state);
     state = await AsyncValue.guard(() async {
-      final newPostTitle = await _fetchPost();
-      // Use copyWith to update only the postTitle
+      final newPostTitle = await _fetchPost(postId);
       return currentData.copyWith(postTitle: newPostTitle);
     });
   }
@@ -157,8 +153,6 @@ class MyHomePage extends ConsumerWidget {
       ),
       body: Center(
         child: asyncDashboardData.when(
-          // skipLoadingOnReload: true prevents the UI from reverting to the 
-          // full-screen loading spinner when we are just refreshing data.
           skipLoadingOnReload: true,
           data: (data) => Padding(
             padding: const EdgeInsets.all(24.0),
@@ -168,14 +162,13 @@ class MyHomePage extends ConsumerWidget {
                 const Icon(Icons.cloud_done, size: 64, color: Colors.teal),
                 const SizedBox(height: 24),
                 
-                // Show a small progress indicator at the top if we are currently fetching
                 if (asyncDashboardData.isLoading)
                   const Padding(
                     padding: EdgeInsets.only(bottom: 16.0),
                     child: LinearProgressIndicator(),
                   )
                 else
-                  const SizedBox(height: 20), // Placeholder to prevent layout jump
+                  const SizedBox(height: 20),
 
                 Text(
                   'Fetched from multiple APIs:',
@@ -183,7 +176,6 @@ class MyHomePage extends ConsumerWidget {
                 ),
                 const SizedBox(height: 24),
                 
-                // User Card
                 Card(
                   child: ListTile(
                     leading: const Icon(Icons.person),
@@ -192,16 +184,18 @@ class MyHomePage extends ConsumerWidget {
                     trailing: IconButton(
                       icon: const Icon(Icons.refresh),
                       tooltip: 'Refresh User Only',
-                      // Disable button if currently loading
                       onPressed: asyncDashboardData.isLoading 
                           ? null 
-                          : () => ref.read(dashboardProvider.notifier).refreshUser(),
+                          : () {
+                              // Client generates the ID and passes it to the provider
+                              final randomUserId = Random().nextInt(10) + 1;
+                              ref.read(dashboardProvider.notifier).refreshUser(randomUserId);
+                            },
                     ),
                   ),
                 ),
                 const SizedBox(height: 12),
                 
-                // Post Card
                 Card(
                   child: ListTile(
                     leading: const Icon(Icons.article),
@@ -210,10 +204,13 @@ class MyHomePage extends ConsumerWidget {
                     trailing: IconButton(
                       icon: const Icon(Icons.refresh),
                       tooltip: 'Refresh Post Only',
-                      // Disable button if currently loading
                       onPressed: asyncDashboardData.isLoading 
                           ? null 
-                          : () => ref.read(dashboardProvider.notifier).refreshPost(),
+                          : () {
+                              // Client generates the ID and passes it to the provider
+                              final randomPostId = Random().nextInt(100) + 1;
+                              ref.read(dashboardProvider.notifier).refreshPost(randomPostId);
+                            },
                     ),
                   ),
                 ),
@@ -247,7 +244,11 @@ class MyHomePage extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton(
-                  onPressed: () => ref.read(dashboardProvider.notifier).refreshAll(),
+                  onPressed: () {
+                    final randomUserId = Random().nextInt(10) + 1;
+                    final randomPostId = Random().nextInt(100) + 1;
+                    ref.read(dashboardProvider.notifier).refreshAll(randomUserId, randomPostId);
+                  },
                   child: const Text('Try Again'),
                 )
               ],
@@ -258,7 +259,12 @@ class MyHomePage extends ConsumerWidget {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: asyncDashboardData.isLoading 
             ? null 
-            : () => ref.read(dashboardProvider.notifier).refreshAll(),
+            : () {
+                // Client generates both IDs and passes them to the provider
+                final randomUserId = Random().nextInt(10) + 1;
+                final randomPostId = Random().nextInt(100) + 1;
+                ref.read(dashboardProvider.notifier).refreshAll(randomUserId, randomPostId);
+              },
         icon: const Icon(Icons.refresh),
         label: const Text('Refresh All'),
       ),
